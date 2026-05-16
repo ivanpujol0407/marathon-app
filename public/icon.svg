@@ -1,0 +1,49 @@
+<svg viewBox="0 0 192 192" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background circle -->
+  <circle cx="96" cy="96" r="96" fill="#0a0a0a"/>
+  
+  <!-- Outer ring (lime green) -->
+  <circle cx="96" cy="96" r="88" fill="none" stroke="#a3e635" stroke-width="4"/>
+  
+  <!-- Inner circle -->
+  <circle cx="96" cy="96" r="80" fill="#161616"/>
+  
+  <!-- Stopwatch body -->
+  <g transform="translate(96, 96)">
+    <!-- Left button -->
+    <rect x="-58" y="-45" width="12" height="18" rx="3" fill="#a3e635"/>
+    
+    <!-- Right button -->
+    <rect x="46" y="-45" width="12" height="18" rx="3" fill="#a3e635"/>
+    
+    <!-- Main watch circle -->
+    <circle cx="0" cy="0" r="50" fill="none" stroke="#a3e635" stroke-width="3"/>
+    <circle cx="0" cy="0" r="48" fill="#0a0a0a"/>
+    
+    <!-- Hour markers -->
+    <g stroke="#a3e635" stroke-width="2">
+      <line x1="0" y1="-45" x2="0" y2="-38"/>
+      <line x1="32" y1="-32" x2="28" y2="-27"/>
+      <line x1="45" y1="0" x2="38" y2="0"/>
+      <line x1="32" y1="32" x2="28" y2="28"/>
+      <line x1="0" y1="45" x2="0" y2="38"/>
+      <line x1="-32" y1="32" x2="-28" y2="28"/>
+      <line x1="-45" y1="0" x2="-38" y2="0"/>
+      <line x1="-32" y1="-32" x2="-28" y2="-27"/>
+    </g>
+    
+    <!-- Hand pointing at 10 (minute hand - longer) -->
+    <line x1="0" y1="0" x2="-25" y2="-35" stroke="#a3e635" stroke-width="3" stroke-linecap="round"/>
+    
+    <!-- Hand pointing at 2 (hour hand - shorter) -->
+    <line x1="0" y1="0" x2="28" y2="-18" stroke="#a3e635" stroke-width="2" stroke-linecap="round"/>
+    
+    <!-- Center dot -->
+    <circle cx="0" cy="0" r="4" fill="#a3e635"/>
+  </g>
+  
+  <!-- Text at bottom -->
+  <text x="96" y="165" font-family="Oswald, sans-serif" font-size="18" font-weight="700" text-anchor="middle" fill="#a3e635" letter-spacing="2">
+    CPH/27
+  </text>
+</svg>
