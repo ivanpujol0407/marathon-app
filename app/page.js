@@ -112,7 +112,10 @@ function getWeekStart(w) {
 
 function formatDate(d) {
   const x = typeof d === 'string' ? new Date(d + 'T00:00:00') : d;
-  return x.toISOString().split('T')[0];
+  const y = x.getFullYear();
+  const m = String(x.getMonth() + 1).padStart(2, '0');
+  const day = String(x.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 function formatDateDisplay(d) {
