@@ -6,7 +6,7 @@ import {
   Tooltip, ResponsiveContainer, ReferenceLine, Area, AreaChart, PieChart, Pie, Cell
 } from 'recharts';
 import {
-  Activity, Dumbbell, Scale, TrendingUp, Calendar, BookOpen,
+  Activity, Scale, TrendingUp, Calendar, BookOpen,
   Check, X, Edit2, Trash2, ChevronLeft, ChevronRight, Target,
   Flame, Zap, Moon, Apple, Trophy, Clock, MapPin, FileText,
   AlertCircle, Plus, ArrowLeft, Footprints, Heart, ChevronDown,
@@ -62,45 +62,92 @@ const C = {
   danger: '#ef4444',
   race: '#fbbf24',
   run: '#a3e635',
-  gym: '#60a5fa',
   rest: '#525252',
 };
 
 const PHASE_DATA = {
-  base:  { name: 'BASE',  fullName: 'Base Building',     color: '#a3e635', desc: 'Aerobic foundation, easy running, build consistency' },
-  build: { name: 'BUILD', fullName: 'Build & Strength',  color: '#facc15', desc: 'Tempo work at 5:25–5:35/km, build marathon-specific fitness' },
+  base:  { name: 'BASE',  fullName: 'Base Building',     color: '#a3e635', desc: 'Aerobic foundation: 2 runs/week in October, 3 from November' },
+  build: { name: 'BUILD', fullName: 'Build & Speed',     color: '#facc15', desc: 'Intervals and tempo runs alternate weekly, long runs grow to 24 km' },
   peak:  { name: 'PEAK',  fullName: 'Peak Training',     color: '#fb923c', desc: 'Marathon-specific long runs with goal-pace segments at 5:41/km' },
   taper: { name: 'TAPER', fullName: 'Taper & Race',      color: '#f87171', desc: 'Reduce volume, maintain speed, peak freshness for race day' },
 };
 
-// 31 weeks: Base W1-8, Build W9-18, Peak W19-26, Taper W27-31
-// Weeks 1-4: 2 runs/week, Weeks 5+: 3 runs/week
+// 31 weeks: Base W1-8, Build W9-18, Peak W19-28, Taper W29-31
+// October (W1-4): 2 runs/week (Tue + Sat). From November (W5+): 3 runs/week (Tue + Thu + Sat)
+// Saturday long runs. Last 32 km on Sat 17 Apr (3 weeks out), then a 3-week taper.
 const LONG_RUNS = [
   // BASE W1-8
-  8, 9, 10, 10, 12, 11, 14, 13,
-  // BUILD W9-18
-  15, 16, 14, 18, 16, 20, 18, 22, 20, 24,
-  // PEAK W19-26
-  22, 26, 22, 28, 24, 30, 26, 32,
-  // TAPER W27-31
-  22, 16, 12, 8, 42.2,
+  8, 9, 10, 10, 12, 13, 14, 12,
+  // BUILD W9-18 (every 3rd week is a cutback)
+  15, 16, 14, 18, 19, 16, 20, 22, 18, 24,
+  // PEAK W19-28 (alternating big / race-pace long runs)
+  26, 20, 28, 22, 30, 24, 32, 24, 26, 32,
+  // TAPER W29-31
+  22, 14, 42.2,
 ];
 
 const GOAL_PACE_KM = [
   // BASE W1-8 (no goal-pace segments)
   0, 0, 0, 0, 0, 0, 0, 0,
-  // BUILD W9-18 (introduce goal-pace segments)
+  // BUILD W9-18
   0, 3, 0, 4, 0, 5, 0, 6, 0, 8,
-  // PEAK W19-26 (longer goal-pace segments)
-  0, 8, 0, 10, 0, 12, 0, 14,
-  // TAPER W27-31
-  6, 4, 0, 0, 42.2,
+  // PEAK W19-28
+  0, 8, 0, 10, 0, 12, 0, 14, 16, 0,
+  // TAPER W29-31
+  10, 6, 42.2,
+];
+
+// Thursday easy run distance (km), W5 onwards. 0 = no Thursday run (October)
+const THURSDAY_EASY = [
+  0, 0, 0, 0, 5, 6, 7, 6,
+  7, 8, 7, 8, 8, 7, 8, 9, 8, 9,
+  9, 8, 10, 8, 10, 8, 10, 8, 9, 10,
+  8, 6, 4,
+];
+
+// Tuesday session per week. Paces for a sub-4:00 (5:41/km) runner:
+// easy 6:20-6:50, tempo 5:20-5:30, intervals 5:00-5:15
+const WU = '15 min easy warm-up';
+const CD = '10 min easy cool-down';
+const TUESDAY = [
+  // October: easy runs only
+  { k: 'easy', d: 5 }, { k: 'easy', d: 5 }, { k: 'easy', d: 6 }, { k: 'easy', d: 6 },
+  // November: easy + strides, first fartlek
+  { k: 'strides', d: 6 }, { k: 'strides', d: 7 },
+  { k: 'fartlek', d: 7, txt: `${WU}, 6 × 1 min fast (~5:00/km) / 1 min easy jog, ${CD}` },
+  { k: 'strides', d: 6 },
+  // BUILD W9-18: intervals and tempo alternate
+  { k: 'intervals', d: 8,  txt: `${WU}, 5 × 800 m @ 5:00–5:10/km (2 min jog between), ${CD}` },
+  { k: 'tempo',     d: 9,  txt: `${WU}, 20 min @ 5:20–5:30/km, ${CD}` },
+  { k: 'intervals', d: 9,  txt: `${WU}, 6 × 800 m @ 5:00–5:10/km (2 min jog between), ${CD}` },
+  { k: 'tempo',     d: 10, txt: `${WU}, 25 min @ 5:20–5:30/km, ${CD}` },
+  { k: 'intervals', d: 10, txt: `${WU}, 5 × 1 km @ 5:00–5:10/km (2 min jog between), ${CD}` },
+  { k: 'tempo',     d: 10, txt: `${WU}, 30 min @ 5:20–5:30/km, ${CD}` },
+  { k: 'intervals', d: 11, txt: `${WU}, 6 × 1 km @ 5:00–5:10/km (2 min jog between), ${CD}` },
+  { k: 'tempo',     d: 11, txt: `${WU}, 2 × 15 min @ 5:20–5:30/km (3 min jog between), ${CD}` },
+  { k: 'intervals', d: 11, txt: `${WU}, 4 × 1.5 km @ 5:05–5:15/km (3 min jog between), ${CD}` },
+  { k: 'tempo',     d: 11, txt: `${WU}, 35 min @ 5:20–5:30/km, ${CD}` },
+  // PEAK W19-28
+  { k: 'intervals', d: 11, txt: `${WU}, 3 × 2 km @ 5:10–5:15/km (3 min jog between), ${CD}` },
+  { k: 'tempo',     d: 11, txt: `${WU}, 35 min @ 5:20–5:30/km, ${CD}` },
+  { k: 'intervals', d: 12, txt: `${WU}, 4 × 2 km @ 5:10–5:15/km (3 min jog between), ${CD}` },
+  { k: 'tempo',     d: 12, txt: `${WU}, 2 × 20 min @ 5:20–5:30/km (3 min jog between), ${CD}` },
+  { k: 'intervals', d: 11, txt: `${WU}, 6 × 1 km @ 5:00–5:10/km (2 min jog between), ${CD}` },
+  { k: 'tempo',     d: 12, txt: `${WU}, 40 min @ 5:20–5:30/km, ${CD}` },
+  { k: 'intervals', d: 13, txt: `${WU}, 3 × 3 km @ 5:15–5:20/km (3 min jog between), ${CD}` },
+  { k: 'tempo',     d: 11, txt: `${WU}, 30 min @ 5:20–5:30/km, ${CD}` },
+  { k: 'intervals', d: 10, txt: `${WU}, 5 × 1 km @ 5:00–5:10/km (2 min jog between), ${CD}` },
+  { k: 'tempo',     d: 11, txt: `${WU}, 30 min @ 5:20–5:30/km, ${CD}` },
+  // TAPER W29-31: keep the speed, cut the volume
+  { k: 'intervals', d: 10, txt: `${WU}, 5 × 1 km @ 5:00–5:10/km (2 min jog between), ${CD}` },
+  { k: 'intervals', d: 8,  txt: `${WU}, 4 × 1 km @ 5:00–5:10/km (2 min jog between), ${CD}` },
+  { k: 'racepace',  d: 7,  txt: '2 km easy, 3 × 1 km @ 5:41/km race pace (2 min jog between), 2 km easy' },
 ];
 
 function getPhase(w) {
   if (w <= 8) return 'base';
   if (w <= 18) return 'build';
-  if (w <= 26) return 'peak';
+  if (w <= 28) return 'peak';
   return 'taper';
 }
 
@@ -136,38 +183,38 @@ function getCurrentWeekNumber() {
   return Math.max(1, Math.min(TOTAL_WEEKS, Math.floor(diff / 7) + 1));
 }
 
-function getWednesdayWorkout(weekNum, phase) {
-  // Weeks 1-4: NO Wednesday run (2 runs/week only)
-  if (weekNum <= 4) {
-    return { type: 'rest', subtype: 'rest', title: 'REST', plannedDistance: 0, plannedTime: 0, description: 'No midweek run this month. Focus on building habit with 2 runs/week.', zone: '-' };
+const REST = (description) => ({ type: 'rest', subtype: 'rest', title: 'REST', plannedDistance: 0, plannedTime: 0, description, zone: '-' });
+
+function getTuesdayWorkout(weekNum) {
+  const t = TUESDAY[weekNum - 1];
+  if (t.k === 'easy') {
+    return { type: 'run', subtype: 'easy', title: 'EASY RUN', plannedDistance: t.d, plannedTime: Math.round(t.d * 6.6), description: 'Easy pace 6:20–6:50/km. Conversational, stay in Z2.', zone: 'Z2' };
   }
-  if (phase === 'base') {
-    return { type: 'run', subtype: 'easy', title: 'EASY RUN', plannedDistance: 8, plannedTime: 52, description: 'Easy pace 6:20–6:40/km. Stay in Z2, conversational.', zone: 'Z2' };
+  if (t.k === 'strides') {
+    return { type: 'run', subtype: 'easy', title: 'EASY + STRIDES', plannedDistance: t.d, plannedTime: Math.round(t.d * 6.5), description: `${t.d} km easy (6:20–6:50/km), then 6 × 20 s strides: quick and relaxed, not a sprint. Walk back between each.`, zone: 'Z2' };
   }
-  if (phase === 'build') {
-    const localWeek = weekNum - 8;
-    const tempoMin = Math.min(30, 18 + Math.floor(localWeek / 2) * 2);
-    return { type: 'run', subtype: 'tempo', title: 'TEMPO', plannedDistance: 10, plannedTime: 58, description: `10 min WU + ${tempoMin} min @ 5:25–5:35/km + 10 min CD`, zone: 'Z4' };
-  }
-  if (phase === 'peak') {
-    const localWeek = weekNum - 18;
-    if (localWeek % 2 === 1) return { type: 'run', subtype: 'tempo', title: 'TEMPO', plannedDistance: 11, plannedTime: 62, description: '10 min WU + 28–32 min @ 5:25–5:35/km + 10 min CD', zone: 'Z4' };
-    return { type: 'run', subtype: 'racepace', title: 'RACE PACE', plannedDistance: 10, plannedTime: 58, description: '10 min WU + 20 min @ 5:41/km + 10 min CD', zone: 'Z3' };
-  }
-  // Taper
-  const localWeek = weekNum - 26;
-  if (localWeek <= 3) return { type: 'run', subtype: 'speed', title: 'SPEED', plannedDistance: 7, plannedTime: 38, description: '10 min WU + 4–5 × 2 min @ 5:20/km + 10 min CD', zone: 'Z4' };
-  if (localWeek === 5) return { type: 'run', subtype: 'racepace', title: 'PRE-RACE TUNE', plannedDistance: 4, plannedTime: 25, description: '3 km easy + 4 × 1 min @ 5:41/km', zone: 'Z3' };
-  return { type: 'run', subtype: 'easy', title: 'EASY SHAKEOUT', plannedDistance: 5, plannedTime: 32, description: 'Very easy 5 km, stay loose. Z1-Z2 only.', zone: 'Z2' };
+  const titles = { fartlek: 'FARTLEK', intervals: 'INTERVALS', tempo: 'TEMPO', racepace: 'RACE PACE' };
+  const zones = { fartlek: 'Z4', intervals: 'Z4-Z5', tempo: 'Z4', racepace: 'Z3' };
+  return { type: 'run', subtype: t.k, title: titles[t.k], plannedDistance: t.d, plannedTime: Math.round(t.d * 6.0), description: t.txt, zone: zones[t.k] };
 }
 
-function getSaturdayWorkout(weekNum, phase) {
+function getThursdayWorkout(weekNum) {
+  const d = THURSDAY_EASY[weekNum - 1];
+  if (!d) return REST('Rest. 2 runs/week in October.');
+  if (weekNum === TOTAL_WEEKS) {
+    return { type: 'run', subtype: 'easy', title: 'EASY + STRIDES', plannedDistance: d, plannedTime: 26, description: 'Very easy 4 km + 4 × 20 s strides. Stay loose.', zone: 'Z2' };
+  }
+  return { type: 'run', subtype: 'easy', title: 'EASY RUN', plannedDistance: d, plannedTime: Math.round(d * 6.6), description: 'Easy pace 6:20–6:50/km. Recovery run, keep it truly easy.', zone: 'Z2' };
+}
+
+function getSaturdayWorkout(weekNum) {
+  if (weekNum === TOTAL_WEEKS) return REST('Rest, or an optional 15 min shakeout jog. Prepare gear, hydrate, sleep early.');
   const distance = LONG_RUNS[weekNum - 1];
   const goalPace = GOAL_PACE_KM[weekNum - 1];
-  if (weekNum === TOTAL_WEEKS) return { type: 'rest', subtype: 'rest', title: 'PRE-RACE REST', plannedDistance: 0, plannedTime: 0, description: 'Complete rest. Prepare gear, hydrate, sleep early.', zone: '-' };
-  const estPace = goalPace > 0 ? 6.2 : 6.5;
-  const time = Math.round(distance * estPace);
-  const description = goalPace > 0 ? `Easy pace + ${goalPace} km @ 5:41/km in the middle` : 'Easy pace (6:20–6:40/km)';
+  const time = Math.round(distance * (goalPace > 0 ? 6.3 : 6.6));
+  const description = goalPace > 0
+    ? `Easy pace, with ${goalPace} km @ 5:41/km race pace in the second half`
+    : 'Easy pace (6:20–6:50/km). Practise fuelling on runs over 90 min.';
   return { type: 'run', subtype: 'long', title: 'LONG RUN', plannedDistance: distance, plannedTime: time, description, zone: goalPace > 0 ? 'Z3' : 'Z2', goalPaceKm: goalPace };
 }
 
@@ -175,61 +222,20 @@ function getRaceDayWorkout() {
   return { type: 'race', subtype: 'marathon', title: 'RACE DAY', plannedDistance: 42.2, plannedTime: 240, description: 'COPENHAGEN MARATHON. Goal: sub-4:00 @ 5:41/km. Execute your plan.', zone: 'Z3' };
 }
 
-function getMondayEasyRun(weekNum) {
-  // Weeks 1-4: this is the only midweek run (instead of Wednesday)
-  if (weekNum <= 2) return { type: 'run', subtype: 'easy', title: 'EASY RUN', plannedDistance: 5, plannedTime: 34, description: 'Easy pace 6:30–7:00/km. Just get moving, stay comfortable.', zone: 'Z2' };
-  if (weekNum <= 4) return { type: 'run', subtype: 'easy', title: 'EASY RUN', plannedDistance: 6, plannedTime: 40, description: 'Easy pace 6:20–6:40/km. Build consistency.', zone: 'Z2' };
-  return null; // Weeks 5+ use the normal schedule
-}
-
 function generateWeekWorkouts(weekNum) {
   const phase = getPhase(weekNum);
   const weekStart = getWeekStart(weekNum);
-  const isTwoRunWeek = weekNum <= 4; // First month: 2 runs/week only
   const workouts = [];
   for (let i = 0; i < 7; i++) {
     const date = new Date(weekStart);
     date.setDate(date.getDate() + i);
     const dateStr = formatDate(date);
     let workout;
-    if (i === 0) {
-      // Monday
-      if (isTwoRunWeek) {
-        // Weeks 1-4: Monday is the easy run (one of only 2 runs this week)
-        workout = getMondayEasyRun(weekNum);
-      } else if (weekNum === TOTAL_WEEKS) {
-        workout = { type: 'run', subtype: 'easy', title: 'EASY JOG', plannedDistance: 3, plannedTime: 20, description: 'Very easy 3 km, stay loose.', zone: 'Z1' };
-      } else {
-        workout = { type: 'rest', subtype: 'rest', title: 'REST', plannedDistance: 0, plannedTime: 0, description: 'Full rest or 20–30 min easy walk.', zone: '-' };
-      }
-    } else if (i === 1) {
-      // Tuesday — Gym
-      const phaseLabel = phase === 'taper' ? 'Light mobility + activation' :
-        phase === 'peak' ? 'Single-leg squats, calves, step-ups, hamstrings' :
-        phase === 'build' ? 'Squats, Bulgarian splits, plyometrics' :
-        'Squats, lunges, calf raises, balance';
-      workout = { type: 'gym', subtype: 'lower', title: 'GYM LOWER', plannedDistance: 0, plannedTime: phase === 'taper' ? 35 : 55, description: phaseLabel, zone: '-' };
-    } else if (i === 2) {
-      // Wednesday — Quality run (or rest in weeks 1-4)
-      workout = getWednesdayWorkout(weekNum, phase);
-    } else if (i === 3) {
-      // Thursday — Rest
-      workout = { type: 'rest', subtype: 'rest', title: 'REST', plannedDistance: 0, plannedTime: 0, description: 'Rest. Foam roll, stretch, hydrate.', zone: '-' };
-    } else if (i === 4) {
-      // Friday — Gym
-      const phaseLabel = phase === 'taper' ? 'Mobility, core, foam rolling' :
-        phase === 'peak' ? 'Anti-rotation core, glute activation, shoulders' :
-        'Core, upper body, planks, rotational';
-      workout = { type: 'gym', subtype: 'general', title: 'GYM CORE/UPPER', plannedDistance: 0, plannedTime: phase === 'taper' ? 30 : 50, description: phaseLabel, zone: '-' };
-    } else if (i === 5) {
-      // Saturday — Long run
-      workout = getSaturdayWorkout(weekNum, phase);
-    } else {
-      // Sunday — Race day or rest
-      if (dateStr === RACE_DATE) workout = getRaceDayWorkout();
-      else if (weekNum === TOTAL_WEEKS) workout = { type: 'rest', subtype: 'rest', title: 'FINAL PREP', plannedDistance: 0, plannedTime: 0, description: 'Final prep. Sleep early. Tomorrow you race.', zone: '-' };
-      else workout = { type: 'rest', subtype: 'rest', title: 'REST', plannedDistance: 0, plannedTime: 0, description: 'Complete rest. Recovery is essential.', zone: '-' };
-    }
+    if (i === 1) workout = getTuesdayWorkout(weekNum);          // Tuesday: quality / easy
+    else if (i === 3) workout = getThursdayWorkout(weekNum);    // Thursday: easy (from November)
+    else if (i === 5) workout = getSaturdayWorkout(weekNum);    // Saturday: long run
+    else if (i === 6 && dateStr === RACE_DATE) workout = getRaceDayWorkout();
+    else workout = REST(i === 0 ? 'Rest. Light walk or mobility if you feel like it.' : 'Rest. Recovery is where the fitness is built.');
     workouts.push({ ...workout, date: dateStr, day: getDayName(date), weekNum, phase });
   }
   return workouts;
@@ -356,7 +362,6 @@ function PhaseBadge({ phase }) {
 
 function WorkoutIcon({ type, size = 18 }) {
   if (type === 'run') return <Footprints size={size} style={{ color: C.run }} />;
-  if (type === 'gym') return <Dumbbell size={size} style={{ color: C.gym }} />;
   if (type === 'race') return <Trophy size={size} style={{ color: C.race }} />;
   return <Moon size={size} style={{ color: C.rest }} />;
 }
@@ -437,7 +442,6 @@ function LogModal({ workout, existingLog, onClose, onSave, onDelete }) {
       type: workout.type,
       subtype: workout.subtype,
       ...(isRun ? { distance: parseFloat(distance) || 0, duration: parseFloat(duration) || 0, pace, zone } : {}),
-      ...(workout.type === 'gym' ? { duration: parseFloat(duration) || 0 } : {}),
     };
     const ok = saveLog(workout.date, data);
     setSaving(false);
@@ -652,36 +656,6 @@ function LogModal({ workout, existingLog, onClose, onSave, onDelete }) {
               </>
             )}
 
-            {workout.type === 'gym' && (
-              <div>
-                <label className="text-xs block mb-1.5" style={{ color: C.textDim, fontFamily: 'Oswald, sans-serif', letterSpacing: '0.1em' }}>
-                  DURATION
-                </label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    value={duration}
-                    onChange={(e) => setDuration(e.target.value)}
-                    className="w-full px-4 rounded-xl text-2xl"
-                    style={{
-                      height: 56,
-                      backgroundColor: C.bg,
-                      border: `1px solid ${C.borderLight}`,
-                      color: C.text,
-                      fontFamily: 'JetBrains Mono, monospace',
-                      paddingRight: 45,
-                    }}
-                  />
-                  <span
-                    className="absolute right-4 top-1/2 -translate-y-1/2 text-sm"
-                    style={{ color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}
-                  >
-                    min
-                  </span>
-                </div>
-              </div>
-            )}
-
             <div>
               <label className="text-xs block mb-1.5" style={{ color: C.textDim, fontFamily: 'Oswald, sans-serif', letterSpacing: '0.1em' }}>
                 NOTES
@@ -809,7 +783,6 @@ function WorkoutRow({ workout, log, onClick }) {
           height: 44,
           backgroundColor:
             workout.type === 'run' ? C.run + '15' :
-            workout.type === 'gym' ? C.gym + '15' :
             workout.type === 'race' ? C.race + '15' :
             C.surfaceLight,
         }}
@@ -848,7 +821,6 @@ function WorkoutRow({ workout, log, onClick }) {
           {log ? (
             (workout.type === 'run' || workout.type === 'race') ?
               `${log.distance || 0} km · ${log.duration || 0} min · ${log.pace || '—'}/km` :
-              workout.type === 'gym' ? `${log.duration || 0} min · done` :
               log.notes ? 'noted' : 'logged'
           ) : (
             workout.plannedDistance > 0 ?
@@ -897,7 +869,7 @@ function Dashboard({ plan, logs, weights, onWorkoutClick }) {
   const completionRate = totalPlanned > 0 ? Math.round((totalLogged / totalPlanned) * 100) : 0;
 
   const totalDistance = logs.filter((l) => l.type === 'run' && l.distance).reduce((s, l) => s + (l.distance || 0), 0);
-  const totalTime = logs.filter((l) => (l.type === 'run' || l.type === 'gym') && l.duration).reduce((s, l) => s + (l.duration || 0), 0);
+  const totalTime = logs.filter((l) => l.type === 'run' && l.duration).reduce((s, l) => s + (l.duration || 0), 0);
   const daysToRace = Math.max(0, Math.ceil((new Date(RACE_DATE + 'T00:00:00') - new Date()) / 86400000));
   const latestWeight = weights.length > 0 ? weights[weights.length - 1].kg : null;
 
@@ -1183,8 +1155,8 @@ function PlanView({ plan, logs, onWorkoutClick }) {
           {[
             { p: 'base', w: 1, range: [1, 8] },
             { p: 'build', w: 9, range: [9, 18] },
-            { p: 'peak', w: 19, range: [19, 26] },
-            { p: 'taper', w: 27, range: [27, 31] },
+            { p: 'peak', w: 19, range: [19, 28] },
+            { p: 'taper', w: 29, range: [29, 31] },
           ].map((b) => {
             const active = weekNum >= b.range[0] && weekNum <= b.range[1];
             return (
