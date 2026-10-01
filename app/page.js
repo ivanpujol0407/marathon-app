@@ -23,7 +23,7 @@ const MAX_HR = Math.round(208 - 0.7 * USER_AGE); // 190 bpm
 const HR_ZONES = [
   { id: 'Z1', name: 'RECOVERY',  minPct: 50, maxPct: 60, color: '#60a5fa', feel: 'Very easy, can sing',           use: 'Active recovery, warm-ups, cool-downs' },
   { id: 'Z2', name: 'EASY',      minPct: 60, maxPct: 70, color: '#a3e635', feel: 'Conversational pace',           use: 'Aerobic base, long runs, easy days' },
-  { id: 'Z3', name: 'TEMPO',     minPct: 70, maxPct: 80, color: '#facc15', feel: 'Comfortably hard, short replies', use: 'Marathon race pace (5:30/km)' },
+  { id: 'Z3', name: 'TEMPO',     minPct: 70, maxPct: 80, color: '#facc15', feel: 'Comfortably hard, short replies', use: 'Marathon race pace (5:41/km)' },
   { id: 'Z4', name: 'THRESHOLD', minPct: 80, maxPct: 90, color: '#fb923c', feel: 'Hard, only single words',       use: 'Lactate threshold tempo runs' },
   { id: 'Z5', name: 'VO2 MAX',   minPct: 90, maxPct: 100, color: '#ef4444', feel: 'Max effort, breathless',        use: 'Short intervals, race finish' },
 ];
@@ -44,7 +44,8 @@ function getZoneData(id) {
 // ============================================================
 
 const RACE_DATE = '2027-05-09';
-const START_DATE = '2026-05-18';
+const START_DATE = '2026-10-05';
+const TOTAL_WEEKS = 31;
 
 const C = {
   bg: '#0a0a0a',
@@ -66,30 +67,40 @@ const C = {
 };
 
 const PHASE_DATA = {
-  base:  { name: 'BASE',  fullName: 'Base Building',     color: '#a3e635', desc: 'Aerobic foundation, introduce faster paces, injury prevention' },
-  build: { name: 'BUILD', fullName: 'Build & Strength',  color: '#facc15', desc: 'Tempo work at 5:15–5:25/km, establish 5:30/km capability' },
-  peak:  { name: 'PEAK',  fullName: 'Peak Training',     color: '#fb923c', desc: 'Marathon-specific work, long runs with goal-pace segments' },
-  taper: { name: 'TAPER', fullName: 'Taper & Race',      color: '#f87171', desc: 'Recovery, maintain speed, peak freshness for race day' },
+  base:  { name: 'BASE',  fullName: 'Base Building',     color: '#a3e635', desc: 'Aerobic foundation, easy running, build consistency' },
+  build: { name: 'BUILD', fullName: 'Build & Strength',  color: '#facc15', desc: 'Tempo work at 5:25–5:35/km, build marathon-specific fitness' },
+  peak:  { name: 'PEAK',  fullName: 'Peak Training',     color: '#fb923c', desc: 'Marathon-specific long runs with goal-pace segments at 5:41/km' },
+  taper: { name: 'TAPER', fullName: 'Taper & Race',      color: '#f87171', desc: 'Reduce volume, maintain speed, peak freshness for race day' },
 };
 
+// 31 weeks: Base W1-8, Build W9-18, Peak W19-26, Taper W27-31
+// Weeks 1-4: 2 runs/week, Weeks 5+: 3 runs/week
 const LONG_RUNS = [
-  10, 11, 10, 12, 13, 11, 14, 15, 13, 16, 14, 16, 12,
-  17, 18, 16, 20, 21, 18, 23, 24, 20, 26, 22, 26, 18,
-  26, 27, 24, 28, 30, 26, 32, 33, 28, 36, 32, 30, 28, 26, 24, 20,
-  20, 18, 16, 14, 12, 10, 12, 10, 42.2,
+  // BASE W1-8
+  8, 9, 10, 10, 12, 11, 14, 13,
+  // BUILD W9-18
+  15, 16, 14, 18, 16, 20, 18, 22, 20, 24,
+  // PEAK W19-26
+  22, 26, 22, 28, 24, 30, 26, 32,
+  // TAPER W27-31
+  22, 16, 12, 8, 42.2,
 ];
 
 const GOAL_PACE_KM = [
-  0, 0, 0, 0, 2, 0, 3, 3, 0, 4, 0, 4, 0,
-  0, 0, 0, 6, 7, 0, 8, 9, 0, 10, 0, 11, 0,
-  0, 0, 0, 12, 13, 0, 15, 16, 0, 18, 16, 14, 12, 10, 8, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 42.2,
+  // BASE W1-8 (no goal-pace segments)
+  0, 0, 0, 0, 0, 0, 0, 0,
+  // BUILD W9-18 (introduce goal-pace segments)
+  0, 3, 0, 4, 0, 5, 0, 6, 0, 8,
+  // PEAK W19-26 (longer goal-pace segments)
+  0, 8, 0, 10, 0, 12, 0, 14,
+  // TAPER W27-31
+  6, 4, 0, 0, 42.2,
 ];
 
 function getPhase(w) {
-  if (w <= 13) return 'base';
-  if (w <= 26) return 'build';
-  if (w <= 42) return 'peak';
+  if (w <= 8) return 'base';
+  if (w <= 18) return 'build';
+  if (w <= 26) return 'peak';
   return 'taper';
 }
 
@@ -119,47 +130,59 @@ function getCurrentWeekNumber() {
   t.setHours(0, 0, 0, 0);
   const s = new Date(START_DATE + 'T00:00:00');
   const diff = Math.floor((t - s) / (1000 * 60 * 60 * 24));
-  return Math.max(1, Math.min(51, Math.floor(diff / 7) + 1));
+  return Math.max(1, Math.min(TOTAL_WEEKS, Math.floor(diff / 7) + 1));
 }
 
 function getWednesdayWorkout(weekNum, phase) {
+  // Weeks 1-4: NO Wednesday run (2 runs/week only)
+  if (weekNum <= 4) {
+    return { type: 'rest', subtype: 'rest', title: 'REST', plannedDistance: 0, plannedTime: 0, description: 'No midweek run this month. Focus on building habit with 2 runs/week.', zone: '-' };
+  }
   if (phase === 'base') {
-    if (weekNum <= 4) return { type: 'run', subtype: 'threshold', title: 'THRESHOLD INTRO', plannedDistance: 8, plannedTime: 45, description: '10 min easy WU + 12 min @ 5:50/km + 10 min CD', zone: 'Z3' };
-    return { type: 'run', subtype: 'threshold', title: 'THRESHOLD', plannedDistance: 10, plannedTime: 55, description: '10 min WU + 16 min @ 5:40/km + 10 min CD', zone: 'Z3' };
+    return { type: 'run', subtype: 'easy', title: 'EASY RUN', plannedDistance: 8, plannedTime: 52, description: 'Easy pace 6:20–6:40/km. Stay in Z2, conversational.', zone: 'Z2' };
   }
   if (phase === 'build') {
-    const localWeek = weekNum - 13;
-    const tempoMin = Math.min(35, 25 + Math.floor(localWeek / 2) * 2);
-    return { type: 'run', subtype: 'tempo', title: 'TEMPO', plannedDistance: 11, plannedTime: 60, description: `10 min WU + ${tempoMin} min @ 5:15–5:25/km + 10 min CD`, zone: 'Z4' };
+    const localWeek = weekNum - 8;
+    const tempoMin = Math.min(30, 18 + Math.floor(localWeek / 2) * 2);
+    return { type: 'run', subtype: 'tempo', title: 'TEMPO', plannedDistance: 10, plannedTime: 58, description: `10 min WU + ${tempoMin} min @ 5:25–5:35/km + 10 min CD`, zone: 'Z4' };
   }
   if (phase === 'peak') {
-    const localWeek = weekNum - 26;
-    if (localWeek % 2 === 1) return { type: 'run', subtype: 'tempo', title: 'TEMPO', plannedDistance: 12, plannedTime: 65, description: '10 min WU + 30–35 min @ 5:15–5:25/km + 10 min CD', zone: 'Z4' };
-    return { type: 'run', subtype: 'racepace', title: 'RACE PACE', plannedDistance: 11, plannedTime: 60, description: '10 min WU + 15–20 min @ 5:30/km + 10 min CD', zone: 'Z3' };
+    const localWeek = weekNum - 18;
+    if (localWeek % 2 === 1) return { type: 'run', subtype: 'tempo', title: 'TEMPO', plannedDistance: 11, plannedTime: 62, description: '10 min WU + 28–32 min @ 5:25–5:35/km + 10 min CD', zone: 'Z4' };
+    return { type: 'run', subtype: 'racepace', title: 'RACE PACE', plannedDistance: 10, plannedTime: 58, description: '10 min WU + 20 min @ 5:41/km + 10 min CD', zone: 'Z3' };
   }
-  const localWeek = weekNum - 42;
-  if (localWeek <= 6) return { type: 'run', subtype: 'speed', title: 'SPEED', plannedDistance: 7, plannedTime: 35, description: '10 min WU + 4–6 × 2 min @ 5:15/km + 10 min CD', zone: 'Z4' };
-  if (localWeek === 9) return { type: 'run', subtype: 'racepace', title: 'PRE-RACE TUNE', plannedDistance: 3, plannedTime: 20, description: '3 km easy jog + 4 × 1 min @ 5:30/km', zone: 'Z3' };
-  return { type: 'run', subtype: 'speed', title: 'SPEED', plannedDistance: 6, plannedTime: 30, description: '10 min WU + 4 × 1.5 min @ 5:15/km + 10 min CD', zone: 'Z4' };
+  // Taper
+  const localWeek = weekNum - 26;
+  if (localWeek <= 3) return { type: 'run', subtype: 'speed', title: 'SPEED', plannedDistance: 7, plannedTime: 38, description: '10 min WU + 4–5 × 2 min @ 5:20/km + 10 min CD', zone: 'Z4' };
+  if (localWeek === 5) return { type: 'run', subtype: 'racepace', title: 'PRE-RACE TUNE', plannedDistance: 4, plannedTime: 25, description: '3 km easy + 4 × 1 min @ 5:41/km', zone: 'Z3' };
+  return { type: 'run', subtype: 'easy', title: 'EASY SHAKEOUT', plannedDistance: 5, plannedTime: 32, description: 'Very easy 5 km, stay loose. Z1-Z2 only.', zone: 'Z2' };
 }
 
 function getSaturdayWorkout(weekNum, phase) {
   const distance = LONG_RUNS[weekNum - 1];
   const goalPace = GOAL_PACE_KM[weekNum - 1];
-  if (weekNum === 51) return { type: 'rest', subtype: 'rest', title: 'PRE-RACE REST', plannedDistance: 0, plannedTime: 0, description: 'Complete rest. Prepare gear, hydrate, sleep early.', zone: '-' };
-  const estPace = goalPace > 0 ? 6.0 : 6.5;
+  if (weekNum === TOTAL_WEEKS) return { type: 'rest', subtype: 'rest', title: 'PRE-RACE REST', plannedDistance: 0, plannedTime: 0, description: 'Complete rest. Prepare gear, hydrate, sleep early.', zone: '-' };
+  const estPace = goalPace > 0 ? 6.2 : 6.5;
   const time = Math.round(distance * estPace);
-  const description = goalPace > 0 ? `Easy pace + ${goalPace} km @ 5:30/km in the middle` : 'Easy pace (6:00–6:30/km)';
+  const description = goalPace > 0 ? `Easy pace + ${goalPace} km @ 5:41/km in the middle` : 'Easy pace (6:20–6:40/km)';
   return { type: 'run', subtype: 'long', title: 'LONG RUN', plannedDistance: distance, plannedTime: time, description, zone: goalPace > 0 ? 'Z3' : 'Z2', goalPaceKm: goalPace };
 }
 
 function getRaceDayWorkout() {
-  return { type: 'race', subtype: 'marathon', title: 'RACE DAY', plannedDistance: 42.2, plannedTime: 232, description: 'COPENHAGEN MARATHON. Goal: sub-3:52 @ 5:30/km. Execute your plan.', zone: 'Z3' };
+  return { type: 'race', subtype: 'marathon', title: 'RACE DAY', plannedDistance: 42.2, plannedTime: 240, description: 'COPENHAGEN MARATHON. Goal: sub-4:00 @ 5:41/km. Execute your plan.', zone: 'Z3' };
+}
+
+function getMondayEasyRun(weekNum) {
+  // Weeks 1-4: this is the only midweek run (instead of Wednesday)
+  if (weekNum <= 2) return { type: 'run', subtype: 'easy', title: 'EASY RUN', plannedDistance: 5, plannedTime: 34, description: 'Easy pace 6:30–7:00/km. Just get moving, stay comfortable.', zone: 'Z2' };
+  if (weekNum <= 4) return { type: 'run', subtype: 'easy', title: 'EASY RUN', plannedDistance: 6, plannedTime: 40, description: 'Easy pace 6:20–6:40/km. Build consistency.', zone: 'Z2' };
+  return null; // Weeks 5+ use the normal schedule
 }
 
 function generateWeekWorkouts(weekNum) {
   const phase = getPhase(weekNum);
   const weekStart = getWeekStart(weekNum);
+  const isTwoRunWeek = weekNum <= 4; // First month: 2 runs/week only
   const workouts = [];
   for (let i = 0; i < 7; i++) {
     const date = new Date(weekStart);
@@ -167,28 +190,41 @@ function generateWeekWorkouts(weekNum) {
     const dateStr = formatDate(date);
     let workout;
     if (i === 0) {
-      if (weekNum === 51) workout = { type: 'run', subtype: 'easy', title: 'EASY JOG', plannedDistance: 3, plannedTime: 18, description: 'Very easy 3 km, stay loose.', zone: 'Z1' };
-      else workout = { type: 'rest', subtype: 'rest', title: 'REST', plannedDistance: 0, plannedTime: 0, description: 'Full rest or 20–30 min easy walk.', zone: '-' };
+      // Monday
+      if (isTwoRunWeek) {
+        // Weeks 1-4: Monday is the easy run (one of only 2 runs this week)
+        workout = getMondayEasyRun(weekNum);
+      } else if (weekNum === TOTAL_WEEKS) {
+        workout = { type: 'run', subtype: 'easy', title: 'EASY JOG', plannedDistance: 3, plannedTime: 20, description: 'Very easy 3 km, stay loose.', zone: 'Z1' };
+      } else {
+        workout = { type: 'rest', subtype: 'rest', title: 'REST', plannedDistance: 0, plannedTime: 0, description: 'Full rest or 20–30 min easy walk.', zone: '-' };
+      }
     } else if (i === 1) {
+      // Tuesday — Gym
       const phaseLabel = phase === 'taper' ? 'Light mobility + activation' :
         phase === 'peak' ? 'Single-leg squats, calves, step-ups, hamstrings' :
         phase === 'build' ? 'Squats, Bulgarian splits, plyometrics' :
         'Squats, lunges, calf raises, balance';
       workout = { type: 'gym', subtype: 'lower', title: 'GYM LOWER', plannedDistance: 0, plannedTime: phase === 'taper' ? 35 : 55, description: phaseLabel, zone: '-' };
     } else if (i === 2) {
+      // Wednesday — Quality run (or rest in weeks 1-4)
       workout = getWednesdayWorkout(weekNum, phase);
     } else if (i === 3) {
-      workout = { type: 'rest', subtype: 'rest', title: 'REST', plannedDistance: 0, plannedTime: 0, description: 'Rest. Foam roll, stretch, hydrate. Optional 4–6 km easy.', zone: '-' };
+      // Thursday — Rest
+      workout = { type: 'rest', subtype: 'rest', title: 'REST', plannedDistance: 0, plannedTime: 0, description: 'Rest. Foam roll, stretch, hydrate.', zone: '-' };
     } else if (i === 4) {
+      // Friday — Gym
       const phaseLabel = phase === 'taper' ? 'Mobility, core, foam rolling' :
         phase === 'peak' ? 'Anti-rotation core, glute activation, shoulders' :
         'Core, upper body, planks, rotational';
       workout = { type: 'gym', subtype: 'general', title: 'GYM CORE/UPPER', plannedDistance: 0, plannedTime: phase === 'taper' ? 30 : 50, description: phaseLabel, zone: '-' };
     } else if (i === 5) {
+      // Saturday — Long run
       workout = getSaturdayWorkout(weekNum, phase);
     } else {
+      // Sunday — Race day or rest
       if (dateStr === RACE_DATE) workout = getRaceDayWorkout();
-      else if (weekNum === 51) workout = { type: 'rest', subtype: 'rest', title: 'FINAL PREP', plannedDistance: 0, plannedTime: 0, description: 'Final prep. Sleep early. Tomorrow you race.', zone: '-' };
+      else if (weekNum === TOTAL_WEEKS) workout = { type: 'rest', subtype: 'rest', title: 'FINAL PREP', plannedDistance: 0, plannedTime: 0, description: 'Final prep. Sleep early. Tomorrow you race.', zone: '-' };
       else workout = { type: 'rest', subtype: 'rest', title: 'REST', plannedDistance: 0, plannedTime: 0, description: 'Complete rest. Recovery is essential.', zone: '-' };
     }
     workouts.push({ ...workout, date: dateStr, day: getDayName(date), weekNum, phase });
@@ -198,7 +234,7 @@ function generateWeekWorkouts(weekNum) {
 
 function generateFullPlan() {
   const weeks = [];
-  for (let w = 1; w <= 51; w++) {
+  for (let w = 1; w <= TOTAL_WEEKS; w++) {
     weeks.push({ weekNum: w, phase: getPhase(w), startDate: formatDate(getWeekStart(w)), workouts: generateWeekWorkouts(w) });
   }
   return weeks;
@@ -901,7 +937,7 @@ function Dashboard({ plan, logs, weights, onWorkoutClick }) {
           style={{ borderTop: `1px solid ${C.border}`, color: C.textDim, fontFamily: 'JetBrains Mono, monospace' }}
         >
           <Target size={12} />
-          <span>SUB-3:52 · 5:30/km</span>
+          <span>SUB-4:00 · 5:41/km</span>
         </div>
       </div>
 
@@ -933,7 +969,7 @@ function Dashboard({ plan, logs, weights, onWorkoutClick }) {
 
       {/* BIG STATS GRID */}
       <div className="grid grid-cols-2 gap-3">
-        <StatCard label="WEEK" value={currentWeekNum} unit="/ 51" accent={C.primary} />
+        <StatCard label="WEEK" value={currentWeekNum} unit={`/ ${TOTAL_WEEKS}`} accent={C.primary} />
         <StatCard
           label="DONE"
           value={completionRate}
@@ -1036,7 +1072,7 @@ function PlanView({ plan, logs, onWorkoutClick }) {
             className="text-[10px] tracking-widest"
             style={{ color: C.textMuted, fontFamily: 'Oswald, sans-serif', letterSpacing: '0.3em', fontWeight: 600 }}
           >
-            WEEK {String(weekNum).padStart(2, '0')} / 51
+            WEEK {String(weekNum).padStart(2, '0')} / {TOTAL_WEEKS}
           </div>
           <div
             className="text-xs"
@@ -1046,8 +1082,8 @@ function PlanView({ plan, logs, onWorkoutClick }) {
           </div>
         </div>
         <button
-          onClick={() => setWeekNum((n) => Math.min(51, n + 1))}
-          disabled={weekNum === 51}
+          onClick={() => setWeekNum((n) => Math.min(TOTAL_WEEKS, n + 1))}
+          disabled={weekNum === TOTAL_WEEKS}
           className="rounded-xl flex items-center justify-center"
           style={{
             width: 48, height: 48,
@@ -1142,10 +1178,10 @@ function PlanView({ plan, logs, onWorkoutClick }) {
         </div>
         <div className="grid grid-cols-4 gap-2">
           {[
-            { p: 'base', w: 1, range: [1, 13] },
-            { p: 'build', w: 14, range: [14, 26] },
-            { p: 'peak', w: 27, range: [27, 42] },
-            { p: 'taper', w: 43, range: [43, 51] },
+            { p: 'base', w: 1, range: [1, 8] },
+            { p: 'build', w: 9, range: [9, 18] },
+            { p: 'peak', w: 19, range: [19, 26] },
+            { p: 'taper', w: 27, range: [27, 31] },
           ].map((b) => {
             const active = weekNum >= b.range[0] && weekNum <= b.range[1];
             return (
@@ -1247,7 +1283,7 @@ function Progress({ plan, logs, weights, onAddWeight }) {
           className="text-xs mt-1"
           style={{ color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}
         >
-          Week {currentWeekNum} of 51 · {Math.round((currentWeekNum / 51) * 100)}% through plan
+          Week {currentWeekNum} of {TOTAL_WEEKS} · {Math.round((currentWeekNum / TOTAL_WEEKS) * 100)}% through plan
         </div>
       </div>
 
@@ -1360,7 +1396,7 @@ function Progress({ plan, logs, weights, onAddWeight }) {
                   tickFormatter={(v) => `${Math.floor(v / 60)}:${String(Math.round(v % 60)).padStart(2, '0')}`}
                 />
                 <Tooltip contentStyle={{ backgroundColor: C.bg, border: `1px solid ${C.borderLight}`, fontFamily: 'JetBrains Mono, monospace', fontSize: 11, borderRadius: 8 }} labelStyle={{ color: C.textDim }} formatter={(v, n, p) => [p.payload.pace + '/km', 'Pace']} />
-                <ReferenceLine y={330} stroke={C.race} strokeDasharray="4 4" />
+                <ReferenceLine y={341} stroke={C.race} strokeDasharray="4 4" />
                 <Line type="monotone" dataKey="paceSec" stroke={C.primary} strokeWidth={2.5} dot={{ r: 4, fill: C.primary }} />
               </LineChart>
             </ResponsiveContainer>
@@ -1709,7 +1745,7 @@ const GUIDE_CONTENT = {
       items: [
         'Breakfast 3–4 h before: toast + honey + banana',
         '30 min before: small snack + 200 ml sports drink',
-        'During race (~4 h): 45 g carbs/hour = ~180 g total',
+        'During race (~4 h): 40–45 g carbs/hour = ~160–180 g total',
         'Every 30 min at aid stations: sports drink + water, or gel + water',
         'NEVER try anything new on race day',
       ],
@@ -1758,22 +1794,22 @@ const GUIDE_CONTENT = {
   ],
   pacing: [
     {
-      h: 'GOAL: SUB-3:52 @ 5:30/KM',
+      h: 'GOAL: SUB-4:00 @ 5:41/KM',
       items: [
-        'km 0–10: 5:35/km — controlled start (target 55:50)',
-        'km 10–30: 5:30/km — goal pace (target 1:50:00)',
-        'km 30–35: 5:25/km — push (target 27:05)',
-        'km 35–42.2: 5:20/km — final push (target 38:24)',
-        'Finish: 3:51:19',
+        'km 0–10: 5:45/km — controlled start (target 57:30)',
+        'km 10–30: 5:41/km — goal pace (target 1:53:40)',
+        'km 30–35: 5:38/km — push (target 28:10)',
+        'km 35–42.2: 5:35/km — final push (target 40:12)',
+        'Finish: 3:59:32',
       ],
     },
     {
       h: 'TARGET SPLITS',
       items: [
-        '10 km: 55:50',
-        '21.1 km (half): 1:55:00',
-        '30 km: 2:45:50',
-        '42.2 km (finish): 3:51:30',
+        '10 km: 57:30',
+        '21.1 km (half): 2:00:30',
+        '30 km: 2:51:10',
+        '42.2 km (finish): 3:59:30',
       ],
     },
     {
@@ -1782,17 +1818,17 @@ const GUIDE_CONTENT = {
         'km 10: "Warm-up done, pace controlled."',
         'km 15: "1/3 done, feeling strong."',
         'km 21: "Halfway! Half work done."',
-        'km 30: "12 km left — real race now. Push."',
-        'km 35: "7 km left — empty the tank."',
-        'km 40: "2.2 km left — sprint finish!"',
+        'km 30: "12 km left — real race starts now."',
+        'km 35: "7 km left — dig deep."',
+        'km 40: "2.2 km left — sprint to the finish!"',
       ],
     },
     {
       h: 'RACE DAY RULES',
       items: [
-        'NEVER go out faster than 5:30/km in km 1–10',
+        'NEVER go out faster than 5:41/km in km 1–10',
         'Stick to fueling plan even if feeling great',
-        'Don\'t fight other runners\' paces',
+        'Don\'t chase other runners\' paces',
         'Walking aid stations is fine and often smart',
         'If you blow up at km 30+, walk-run to finish (4:1)',
       ],
@@ -1945,7 +1981,7 @@ function Guide() {
             >
               ⚡ TIP
             </div>
-            Aim for 80% of training in Z1–Z2 (easy) and 20% in Z3–Z5 (hard). This 80/20 rule prevents overtraining and builds your aerobic base — critical for the 5:30/km marathon goal.
+            Aim for 80% of training in Z1–Z2 (easy) and 20% in Z3–Z5 (hard). This 80/20 rule prevents overtraining and builds your aerobic base — critical for the 5:41/km marathon goal.
           </div>
         </div>
       )}
@@ -2078,7 +2114,7 @@ export default function App() {
               className="text-[9px] tracking-widest mt-0.5"
               style={{ color: C.textMuted, fontFamily: 'JetBrains Mono, monospace', letterSpacing: '0.1em' }}
             >
-              MARATHON · SUB-3:52
+              MARATHON · SUB-4:00
             </div>
           </div>
           <div className="flex items-center gap-1.5">
