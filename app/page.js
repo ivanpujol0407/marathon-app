@@ -194,7 +194,7 @@ function getTuesdayWorkout(weekNum) {
     return { type: 'run', subtype: 'easy', title: 'EASY + STRIDES', plannedDistance: t.d, plannedTime: Math.round(t.d * 6.5), description: `${t.d} km easy (6:20–6:50/km), then 6 × 20 s strides: quick and relaxed, not a sprint. Walk back between each.`, zone: 'Z2' };
   }
   const titles = { fartlek: 'FARTLEK', intervals: 'INTERVALS', tempo: 'TEMPO', racepace: 'RACE PACE' };
-  const zones = { fartlek: 'Z4', intervals: 'Z4-Z5', tempo: 'Z4', racepace: 'Z3' };
+  const zones = { fartlek: 'Z4', intervals: 'Z5', tempo: 'Z4', racepace: 'Z3' };
   return { type: 'run', subtype: t.k, title: titles[t.k], plannedDistance: t.d, plannedTime: Math.round(t.d * 6.0), description: t.txt, zone: zones[t.k] };
 }
 
@@ -294,6 +294,95 @@ function listAllWeights() {
   } catch { return []; }
 }
 
+// One-time cleanup per device: removes old test entries dated before the plan start.
+// Runs logged from START_DATE onwards are kept.
+const DATA_VERSION = 'pre-plan-cleanup-2026-10-17';
+
+function resetAllData() {
+  try {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && (key.startsWith('workout:') || key.startsWith('weight:'))) keys.push(key);
+    }
+    keys.forEach((k) => localStorage.removeItem(k));
+    return true;
+  } catch { return false; }
+}
+
+function runOneTimeReset() {
+  try {
+    if (localStorage.getItem('dataVersion') !== DATA_VERSION) {
+      const old = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key) continue;
+        const [kind, date] = key.split(':');
+        if ((kind === 'workout' || kind === 'weight') && date && date < START_DATE) old.push(key);
+      }
+      old.forEach((k) => localStorage.removeItem(k));
+      localStorage.setItem('dataVersion', DATA_VERSION);
+    }
+  } catch {}
+}
+
+// ============================================================
+// SHOES
+// ============================================================
+
+// Runs logged before shoe tracking existed have no shoeId and count for this pair.
+const LEGACY_SHOE_ID = 'asics-nimbus-28';
+const DEFAULT_SHOES = [
+  { id: LEGACY_SHOE_ID, name: 'ASICS Gel-Nimbus 28', startKm: 53, limitKm: 700, retired: false, isDefault: true },
+];
+
+function loadShoes() {
+  try {
+    const raw = localStorage.getItem('shoes');
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr) && arr.length) return arr;
+    }
+    localStorage.setItem('shoes', JSON.stringify(DEFAULT_SHOES));
+  } catch {}
+  return DEFAULT_SHOES;
+}
+
+function saveShoes(list) {
+  try { localStorage.setItem('shoes', JSON.stringify(list)); return true; } catch { return false; }
+}
+
+function stripShoe({ runs, loggedKm, totalKm, pct, lastUsed, ...s }) { return s; }
+
+function ensureDefaultShoe(list) {
+  if (list.some((s) => s.isDefault && !s.retired)) return list;
+  const first = list.find((s) => !s.retired);
+  return list.map((s) => ({ ...s, isDefault: first ? s.id === first.id : false }));
+}
+
+function getDefaultShoeId(shoes) {
+  const d = shoes.find((s) => s.isDefault && !s.retired) || shoes.find((s) => !s.retired);
+  return d ? d.id : null;
+}
+
+function logShoeId(l) { return l.shoeId || LEGACY_SHOE_ID; }
+
+function shoeStats(shoes, logs) {
+  return shoes.map((s) => {
+    const ls = logs.filter((l) => (l.type === 'run' || l.type === 'race') && l.completed !== false && l.distance > 0 && logShoeId(l) === s.id);
+    const loggedKm = ls.reduce((t, l) => t + l.distance, 0);
+    const totalKm = (s.startKm || 0) + loggedKm;
+    return {
+      ...s,
+      runs: ls.length,
+      loggedKm,
+      totalKm,
+      pct: s.limitKm > 0 ? (totalKm / s.limitKm) * 100 : 0,
+      lastUsed: ls.length ? ls.map((l) => l.date).sort().pop() : null,
+    };
+  });
+}
+
 // ============================================================
 // UTILITIES
 // ============================================================
@@ -313,6 +402,148 @@ function paceToSec(p) {
 }
 
 function isToday(d) { return d === formatDate(new Date()); }
+
+function secToPace(sec) {
+  if (!sec || !isFinite(sec)) return '–';
+  let m = Math.floor(sec / 60);
+  let s = Math.round(sec % 60);
+  if (s === 60) { m += 1; s = 0; }
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function minToHM(min) {
+  const h = Math.floor(min / 60);
+  const m = Math.round(min % 60);
+  return h > 0 ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m`;
+}
+
+function minToClock(min) {
+  const total = Math.round(min * 60);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+const GOAL_MIN = 240;           // sub-4:00
+const EASY_FLOOR_SEC = 380;     // easy runs should be 6:20/km or slower
+
+const SESSION_TYPES = [
+  { id: 'easy',      label: 'EASY',      target: 'target 6:20–6:50' },
+  { id: 'long',      label: 'LONG RUN',  target: 'target 6:20–6:50 (+ race-pace km)' },
+  { id: 'tempo',     label: 'TEMPO',     target: 'whole session incl. warm-up' },
+  { id: 'intervals', label: 'INTERVALS', target: 'whole session incl. warm-up' },
+  { id: 'fartlek',   label: 'FARTLEK',   target: 'whole session incl. warm-up' },
+  { id: 'racepace',  label: 'RACE PACE', target: 'whole session' },
+];
+
+const PLAN_MONTHS = ['2026-10', '2026-11', '2026-12', '2027-01', '2027-02', '2027-03', '2027-04', '2027-05'];
+
+function computeStats(plan, logs) {
+  const today = formatDate(new Date());
+  const logByDate = {};
+  logs.forEach((l) => { logByDate[l.date] = l; });
+
+  const runLogs = logs
+    .filter((l) => (l.type === 'run' || l.type === 'race') && l.completed !== false && l.distance > 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const totalKm = runLogs.reduce((s, l) => s + l.distance, 0);
+  const timedLogs = runLogs.filter((l) => l.duration > 0);
+  const timedKm = timedLogs.reduce((s, l) => s + l.distance, 0);
+  const totalMin = timedLogs.reduce((s, l) => s + l.duration, 0);
+  const avgPaceSec = timedKm > 0 ? (totalMin * 60) / timedKm : null;
+  const longest = runLogs.reduce((b, l) => (!b || l.distance > b.distance ? l : b), null);
+  const fastest = timedLogs.filter((l) => l.distance >= 5)
+    .reduce((b, l) => (!b || l.duration / l.distance < b.duration / b.distance ? l : b), null);
+
+  // Plan adherence (only sessions already due; today counts once logged)
+  const allPlanned = plan.flatMap((w) => w.workouts).filter((w) => w.type !== 'rest');
+  const due = allPlanned.filter((w) => w.date < today || (w.date === today && logByDate[w.date]?.completed));
+  const done = due.filter((w) => logByDate[w.date]?.completed);
+  const missed = due.filter((w) => !logByDate[w.date]?.completed);
+  const plannedKmDue = due.reduce((s, w) => s + w.plannedDistance, 0);
+  const doneKmOnPlan = done.reduce((s, w) => s + (logByDate[w.date]?.distance || 0), 0);
+
+  let streak = 0;
+  for (let i = due.length - 1; i >= 0; i--) {
+    if (logByDate[due[i].date]?.completed) streak += 1; else break;
+  }
+
+  // This week
+  const wkNum = getCurrentWeekNumber();
+  const wk = plan.find((w) => w.weekNum === wkNum) || plan[0];
+  const wkRuns = wk.workouts.filter((w) => w.type !== 'rest');
+  const thisWeek = {
+    weekNum: wk.weekNum,
+    plannedKm: wkRuns.reduce((s, w) => s + w.plannedDistance, 0),
+    doneKm: wkRuns.reduce((s, w) => s + (logByDate[w.date]?.completed ? (logByDate[w.date].distance || 0) : 0), 0),
+    plannedRuns: wkRuns.length,
+    doneRuns: wkRuns.filter((w) => logByDate[w.date]?.completed).length,
+  };
+
+  // Weekly totals
+  const weekKm = plan.map((week) => ({
+    weekNum: week.weekNum,
+    km: week.workouts.reduce((s, w) => {
+      const l = logByDate[w.date];
+      return s + (l && l.completed !== false ? (l.distance || 0) : 0);
+    }, 0),
+  }));
+  const biggestWeek = weekKm.reduce((b, w) => (w.km > (b?.km || 0) ? w : b), null);
+
+  // Last 4 weeks vs previous 4 weeks
+  const daysAgo = (n) => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - n); return formatDate(d); };
+  const d28 = daysAgo(28), d56 = daysAgo(56);
+  const last4 = runLogs.filter((l) => l.date > d28 && l.date <= today).reduce((s, l) => s + l.distance, 0);
+  const prev4 = runLogs.filter((l) => l.date > d56 && l.date <= d28).reduce((s, l) => s + l.distance, 0);
+
+  // Monthly
+  const monthly = PLAN_MONTHS.map((m) => {
+    const ls = runLogs.filter((l) => l.date.startsWith(m));
+    const planned = allPlanned.filter((w) => w.date.startsWith(m)).reduce((s, w) => s + w.plannedDistance, 0);
+    const label = new Date(m + '-01T00:00:00').toLocaleDateString('en-GB', { month: 'short' }).toUpperCase();
+    return { month: m, label, km: ls.reduce((s, l) => s + l.distance, 0), runs: ls.length, planned };
+  });
+
+  // Pace by session type
+  const byType = SESSION_TYPES.map((t) => {
+    const ls = timedLogs.filter((l) => l.subtype === t.id);
+    const km = ls.reduce((s, l) => s + l.distance, 0);
+    const min = ls.reduce((s, l) => s + l.duration, 0);
+    return { ...t, count: ls.length, km, paceSec: km > 0 ? (min * 60) / km : null };
+  }).filter((t) => t.count > 0);
+
+  const easyLogs = timedLogs.filter((l) => l.subtype === 'easy');
+  const easyOnTarget = easyLogs.filter((l) => (l.duration * 60) / l.distance >= EASY_FLOOR_SEC).length;
+
+  // Race prediction (Riegel) from the best run of 5 km+ in the last 6 weeks
+  const d42 = daysAgo(42);
+  const candidates = timedLogs.filter((l) => l.distance >= 5 && l.date > d42 && l.subtype !== 'marathon');
+  let prediction = null;
+  candidates.forEach((l) => {
+    const t = l.duration * Math.pow(42.195 / l.distance, 1.06);
+    if (!prediction || t < prediction.min) prediction = { min: t, from: l };
+  });
+
+  // Time in each HR zone
+  const zoneMin = HR_ZONES.map((z) => ({
+    ...z,
+    min: timedLogs.filter((l) => l.zone === z.id).reduce((s, l) => s + l.duration, 0),
+    runs: timedLogs.filter((l) => l.zone === z.id).length,
+  }));
+  const zoneTotal = zoneMin.reduce((s, z) => s + z.min, 0);
+  const easyZoneMin = zoneMin.filter((z) => z.id === 'Z1' || z.id === 'Z2').reduce((s, z) => s + z.min, 0);
+
+  return {
+    runCount: runLogs.length, totalKm, totalMin, avgPaceSec, longest, fastest,
+    dueCount: due.length, doneCount: done.length, missedCount: missed.length, plannedKmDue, doneKmOnPlan, streak,
+    thisWeek, biggestWeek, last4, prev4, monthly, byType,
+    easyCount: easyLogs.length, easyOnTarget, prediction,
+    zoneMin, zoneTotal, easyZoneMin,
+  };
+}
+
 function isPast(d) { return d < formatDate(new Date()); }
 
 // ============================================================
@@ -415,11 +646,232 @@ function StatCard({ label, value, unit, accent, sub }) {
   );
 }
 
+const SECTION_TITLE = { color: C.textMuted, fontFamily: 'Oswald, sans-serif', letterSpacing: '0.25em', fontWeight: 600 };
+
+function Section({ title, right, children }) {
+  return (
+    <div className="rounded-xl p-4" style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-[11px] tracking-widest" style={SECTION_TITLE}>{title}</h3>
+        {right}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function MiniStat({ label, value, unit, sub, color }) {
+  return (
+    <div className="rounded-xl p-4" style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
+      <div className="text-[10px] tracking-widest mb-1.5" style={{ color: C.textMuted, fontFamily: 'Oswald, sans-serif', letterSpacing: '0.2em', fontWeight: 500 }}>
+        {label}
+      </div>
+      <div className="flex items-baseline gap-1">
+        <span className="leading-none" style={{ color: color || C.text, fontFamily: 'Oswald, sans-serif', fontWeight: 600, fontSize: '1.9rem' }}>{value}</span>
+        {unit && <span className="text-xs" style={{ color: C.textDim, fontFamily: 'JetBrains Mono, monospace' }}>{unit}</span>}
+      </div>
+      {sub && <div className="text-[10px] mt-1.5" style={{ color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{sub}</div>}
+    </div>
+  );
+}
+
+function StatRow({ label, sub, value, color }) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-2" style={{ borderTop: `1px solid ${C.border}` }}>
+      <div className="min-w-0">
+        <div className="text-xs" style={{ color: C.textDim, fontFamily: 'Oswald, sans-serif', letterSpacing: '0.1em' }}>{label}</div>
+        {sub && <div className="text-[10px] mt-0.5" style={{ color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{sub}</div>}
+      </div>
+      <div className="text-sm flex-shrink-0 text-right" style={{ color: color || C.text, fontFamily: 'JetBrains Mono, monospace', fontWeight: 600 }}>{value}</div>
+    </div>
+  );
+}
+
+function Bar100({ pct, color }) {
+  return (
+    <div className="h-2 rounded-full overflow-hidden" style={{ backgroundColor: C.bg }}>
+      <div className="h-full transition-all" style={{ width: `${Math.max(0, Math.min(100, pct))}%`, backgroundColor: color || C.primary, borderRadius: 8 }} />
+    </div>
+  );
+}
+
+function ResetData({ onReset }) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 4000);
+    return () => clearTimeout(t);
+  }, [armed]);
+  return (
+    <Section title="DATA">
+      <div className="text-xs mb-3 leading-relaxed" style={{ color: C.textMuted }}>
+        Deletes every logged run and weight entry on this device. The plan and your shoes stay (shoe totals go back to their starting km).
+      </div>
+      <button
+        onClick={() => { if (armed) { resetAllData(); setArmed(false); onReset(); } else setArmed(true); }}
+        className="w-full rounded-xl"
+        style={{
+          height: 48,
+          backgroundColor: armed ? C.danger : C.danger + '15',
+          border: `1px solid ${C.danger}60`,
+          color: armed ? C.text : C.danger,
+          fontFamily: 'Oswald, sans-serif', letterSpacing: '0.2em', fontWeight: 600, fontSize: 12,
+        }}
+      >
+        {armed ? 'TAP AGAIN TO DELETE EVERYTHING' : 'RESET ALL DATA'}
+      </button>
+    </Section>
+  );
+}
+
+function shoeColor(shoe) {
+  if (shoe.retired) return C.textMuted;
+  if (shoe.pct >= 100) return C.danger;
+  if (shoe.pct >= 80) return C.warn;
+  return C.primary;
+}
+
+function ShoeRow({ shoe, onClick }) {
+  const color = shoeColor(shoe);
+  const left = shoe.limitKm - shoe.totalKm;
+  return (
+    <button onClick={onClick} className="w-full text-left py-3" style={{ borderTop: `1px solid ${C.border}` }}>
+      <div className="flex items-center justify-between gap-3 mb-1.5">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="truncate" style={{ color: shoe.retired ? C.textDim : C.text, fontFamily: 'Oswald, sans-serif', fontWeight: 600, letterSpacing: '0.04em' }}>
+            {shoe.name}
+          </span>
+          {shoe.isDefault && !shoe.retired && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded-sm flex-shrink-0" style={{ color: C.primary, border: `1px solid ${C.primary}50`, fontFamily: 'Oswald, sans-serif', letterSpacing: '0.15em' }}>
+              DEFAULT
+            </span>
+          )}
+        </div>
+        <span className="flex-shrink-0" style={{ color, fontFamily: 'Oswald, sans-serif', fontWeight: 600, fontSize: '1.4rem' }}>
+          {shoe.totalKm.toFixed(1)}
+          <span className="text-xs" style={{ color: C.textDim, fontFamily: 'JetBrains Mono, monospace' }}> / {shoe.limitKm} km</span>
+        </span>
+      </div>
+      <Bar100 pct={shoe.pct} color={color} />
+      <div className="flex justify-between gap-2 text-[10px] mt-1.5" style={{ color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>
+        <span>{shoe.runs} {shoe.runs === 1 ? 'run' : 'runs'} logged · {shoe.startKm} km before</span>
+        <span style={{ color }}>{shoe.retired ? 'RETIRED' : left <= 0 ? 'REPLACE NOW' : `${left.toFixed(0)} km left`}</span>
+      </div>
+    </button>
+  );
+}
+
+const MODAL_LABEL = { color: C.textDim, fontFamily: 'Oswald, sans-serif', letterSpacing: '0.1em' };
+const MODAL_INPUT = { height: 52, backgroundColor: C.bg, border: `1px solid ${C.borderLight}`, color: C.text, fontFamily: 'JetBrains Mono, monospace' };
+
+function ShoeModal({ shoe, shoes, onClose, onSaved }) {
+  const isNew = !shoe;
+  const [name, setName] = useState(shoe?.name ?? '');
+  const [startKm, setStartKm] = useState(String(shoe?.startKm ?? 0));
+  const [limitKm, setLimitKm] = useState(String(shoe?.limitKm ?? 700));
+  const [isDefault, setIsDefault] = useState(shoe ? !!shoe.isDefault : true);
+  const [retired, setRetired] = useState(!!shoe?.retired);
+  const [armDelete, setArmDelete] = useState(false);
+  const canSave = name.trim().length > 0;
+  const canDelete = !isNew && shoe.runs === 0;
+
+  function handleSave() {
+    if (!canSave) return;
+    const fields = {
+      name: name.trim(),
+      startKm: Math.max(0, parseFloat(startKm) || 0),
+      limitKm: Math.max(1, parseFloat(limitKm) || 700),
+      retired,
+      isDefault: isDefault && !retired,
+    };
+    let list = shoes.map(stripShoe);
+    const id = isNew ? `shoe-${Date.now()}` : shoe.id;
+    if (isNew) list.push({ id, ...fields });
+    else list = list.map((s) => (s.id === id ? { ...s, ...fields } : s));
+    if (fields.isDefault) list = list.map((s) => ({ ...s, isDefault: s.id === id }));
+    saveShoes(ensureDefaultShoe(list));
+    onSaved();
+  }
+
+  function handleDelete() {
+    if (!armDelete) { setArmDelete(true); return; }
+    saveShoes(ensureDefaultShoe(shoes.map(stripShoe).filter((s) => s.id !== shoe.id)));
+    onSaved();
+  }
+
+  const toggle = (on) => ({
+    height: 48,
+    backgroundColor: on ? C.primary + '20' : C.bg,
+    border: `1px solid ${on ? C.primary : C.borderLight}`,
+    color: on ? C.primary : C.textDim,
+    fontFamily: 'Oswald, sans-serif', letterSpacing: '0.15em', fontWeight: 600, fontSize: 12,
+  });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.85)' }} onClick={onClose}>
+      <div className="w-full sm:max-w-sm sm:rounded-2xl overflow-hidden" style={{ backgroundColor: C.surface, border: `1px solid ${C.borderLight}` }} onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: `1px solid ${C.border}` }}>
+          <h3 className="text-xl" style={{ color: C.text, fontFamily: 'Oswald, sans-serif', fontWeight: 600, letterSpacing: '0.08em' }}>
+            {isNew ? 'ADD SHOES' : 'EDIT SHOES'}
+          </h3>
+          <button onClick={onClose} className="flex items-center justify-center" style={{ width: 44, height: 44 }}>
+            <X size={22} style={{ color: C.textDim }} />
+          </button>
+        </div>
+
+        <div className="px-5 py-5 space-y-4">
+          <div>
+            <label className="text-xs block mb-1.5" style={MODAL_LABEL}>NAME</label>
+            <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Nike Pegasus 42" className="w-full px-4 rounded-xl" style={MODAL_INPUT} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs block mb-1.5" style={MODAL_LABEL}>KM ALREADY RUN</label>
+              <input type="number" step="0.1" value={startKm} onChange={(e) => setStartKm(e.target.value)} className="w-full px-4 rounded-xl" style={MODAL_INPUT} />
+            </div>
+            <div>
+              <label className="text-xs block mb-1.5" style={MODAL_LABEL}>REPLACE AT (KM)</label>
+              <input type="number" value={limitKm} onChange={(e) => setLimitKm(e.target.value)} className="w-full px-4 rounded-xl" style={MODAL_INPUT} />
+            </div>
+          </div>
+          <div className="text-[11px] leading-relaxed" style={{ color: C.textMuted }}>
+            KM ALREADY RUN is distance done before you started logging these shoes here. Runs you log are added on top.
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={() => setIsDefault(!isDefault)} className="rounded-xl" style={toggle(isDefault && !retired)} disabled={retired}>
+              {isDefault && !retired ? '✓ DEFAULT' : 'SET DEFAULT'}
+            </button>
+            {!isNew && (
+              <button onClick={() => setRetired(!retired)} className="rounded-xl" style={toggle(retired)}>
+                {retired ? '✓ RETIRED' : 'RETIRE'}
+              </button>
+            )}
+          </div>
+          {canDelete && (
+            <button onClick={handleDelete} className="w-full rounded-xl" style={{ ...toggle(false), color: C.danger, border: `1px solid ${C.danger}60`, backgroundColor: armDelete ? C.danger + '25' : C.bg }}>
+              {armDelete ? 'TAP AGAIN TO DELETE' : 'DELETE THESE SHOES'}
+            </button>
+          )}
+        </div>
+
+        <div className="px-5 py-4 flex gap-2" style={{ borderTop: `1px solid ${C.border}`, backgroundColor: C.surfaceLight }}>
+          <button onClick={onClose} className="flex-1 rounded-xl" style={{ height: 52, backgroundColor: C.bg, border: `1px solid ${C.borderLight}`, color: C.textDim, fontFamily: 'Oswald, sans-serif', letterSpacing: '0.2em', fontWeight: 600 }}>
+            CANCEL
+          </button>
+          <button onClick={handleSave} disabled={!canSave} className="flex-1 rounded-xl" style={{ height: 52, backgroundColor: C.primary, color: C.bg, fontFamily: 'Oswald, sans-serif', fontWeight: 700, letterSpacing: '0.2em', opacity: canSave ? 1 : 0.4 }}>
+            SAVE
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ============================================================
 // LOG MODAL (WITH HR ZONE SELECTOR)
 // ============================================================
 
-function LogModal({ workout, existingLog, onClose, onSave, onDelete }) {
+function LogModal({ workout, existingLog, shoes = [], onClose, onSave, onDelete }) {
   const isRun = workout.type === 'run' || workout.type === 'race';
   const [distance, setDistance] = useState(existingLog?.distance ?? (isRun ? workout.plannedDistance : ''));
   const [duration, setDuration] = useState(existingLog?.duration ?? (workout.plannedTime || ''));
@@ -427,6 +879,8 @@ function LogModal({ workout, existingLog, onClose, onSave, onDelete }) {
   const [completed, setCompleted] = useState(existingLog?.completed ?? true);
   const [zone, setZone] = useState(existingLog?.zone ?? (isRun ? workout.zone : null));
   const [saving, setSaving] = useState(false);
+  const [shoeId, setShoeId] = useState(existingLog ? logShoeId(existingLog) : getDefaultShoeId(shoes));
+  const shoeOptions = shoes.filter((s) => !s.retired || s.id === shoeId);
 
   const pace = useMemo(() => {
     if (isRun) return parsePace(parseFloat(distance), parseFloat(duration));
@@ -441,7 +895,7 @@ function LogModal({ workout, existingLog, onClose, onSave, onDelete }) {
       loggedAt: new Date().toISOString(),
       type: workout.type,
       subtype: workout.subtype,
-      ...(isRun ? { distance: parseFloat(distance) || 0, duration: parseFloat(duration) || 0, pace, zone } : {}),
+      ...(isRun ? { distance: parseFloat(distance) || 0, duration: parseFloat(duration) || 0, pace, zone, shoeId } : {}),
     };
     const ok = saveLog(workout.date, data);
     setSaving(false);
@@ -653,6 +1107,41 @@ function LogModal({ workout, existingLog, onClose, onSave, onDelete }) {
                     })}
                   </div>
                 </div>
+
+                {/* SHOES */}
+                {shoeOptions.length > 0 && (
+                  <div>
+                    <label className="text-xs block mb-2" style={{ color: C.textDim, fontFamily: 'Oswald, sans-serif', letterSpacing: '0.1em' }}>
+                      SHOES
+                    </label>
+                    <div className="space-y-1.5">
+                      {shoeOptions.map((s) => {
+                        const active = shoeId === s.id;
+                        return (
+                          <button
+                            key={s.id}
+                            onClick={() => setShoeId(s.id)}
+                            className="w-full rounded-xl px-4 flex items-center justify-between gap-3"
+                            style={{
+                              height: 52,
+                              backgroundColor: active ? C.primary + '20' : C.bg,
+                              border: `1px solid ${active ? C.primary : C.borderLight}`,
+                              color: active ? C.primary : C.textDim,
+                            }}
+                          >
+                            <span className="flex items-center gap-2 min-w-0">
+                              <Footprints size={16} className="flex-shrink-0" />
+                              <span className="truncate" style={{ fontFamily: 'Oswald, sans-serif', letterSpacing: '0.05em', fontWeight: 600 }}>{s.name}</span>
+                            </span>
+                            <span className="text-xs flex-shrink-0" style={{ fontFamily: 'JetBrains Mono, monospace' }}>
+                              {s.totalKm.toFixed(0)} km
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </>
             )}
 
@@ -856,19 +1345,19 @@ function WorkoutRow({ workout, log, onClick }) {
 // DASHBOARD
 // ============================================================
 
-function Dashboard({ plan, logs, weights, onWorkoutClick }) {
+function Dashboard({ plan, logs, weights, shoes = [], onWorkoutClick }) {
   const currentWeekNum = getCurrentWeekNumber();
   const currentWeek = plan.find((w) => w.weekNum === currentWeekNum) || plan[0];
   const today = formatDate(new Date());
   const todayWorkout = currentWeek.workouts.find((w) => w.date === today);
   const todayLog = logs.find((l) => l.date === today);
 
-  const totalLogged = logs.filter((l) => l.completed).length;
+  const totalLogged = logs.filter((l) => l.completed && l.type !== 'rest').length;
   const totalPlanned = plan.flatMap((w) => w.workouts)
     .filter((w) => (isPast(w.date) || isToday(w.date)) && w.type !== 'rest').length;
   const completionRate = totalPlanned > 0 ? Math.round((totalLogged / totalPlanned) * 100) : 0;
 
-  const totalDistance = logs.filter((l) => l.type === 'run' && l.distance).reduce((s, l) => s + (l.distance || 0), 0);
+  const totalDistance = logs.filter((l) => (l.type === 'run' || l.type === 'race') && l.distance).reduce((s, l) => s + (l.distance || 0), 0);
   const totalTime = logs.filter((l) => l.type === 'run' && l.duration).reduce((s, l) => s + (l.duration || 0), 0);
   const daysToRace = Math.max(0, Math.ceil((new Date(RACE_DATE + 'T00:00:00') - new Date()) / 86400000));
   const latestWeight = weights.length > 0 ? weights[weights.length - 1].kg : null;
@@ -915,6 +1404,16 @@ function Dashboard({ plan, logs, weights, onWorkoutClick }) {
           <span>SUB-4:00 · 5:41/km</span>
         </div>
       </div>
+
+      {/* SHOE WARNING */}
+      {shoes.filter((s) => !s.retired && s.pct >= 90).map((s) => (
+        <div key={s.id} className="rounded-xl px-4 py-3 flex items-center gap-3" style={{ backgroundColor: shoeColor(s) + '15', border: `1px solid ${shoeColor(s)}50` }}>
+          <Footprints size={18} style={{ color: shoeColor(s) }} />
+          <div className="text-xs" style={{ color: C.text, fontFamily: 'JetBrains Mono, monospace' }}>
+            {s.name}: {s.totalKm.toFixed(0)} / {s.limitKm} km. {s.pct >= 100 ? 'Time to replace them.' : 'Start thinking about a new pair.'}
+          </div>
+        </div>
+      ))}
 
       {/* TODAY (PROMINENT) */}
       {todayWorkout && (
@@ -1188,8 +1687,9 @@ function PlanView({ plan, logs, onWorkoutClick }) {
 // PROGRESS VIEW (CHARTS)
 // ============================================================
 
-function Progress({ plan, logs, weights, onAddWeight }) {
+function Progress({ plan, logs, weights, shoes = [], onAddWeight, onReset, onEditShoe }) {
   const currentWeekNum = getCurrentWeekNumber();
+  const st = useMemo(() => computeStats(plan, logs), [plan, logs]);
 
   const volumeData = useMemo(() => plan.map((week) => ({
     week: week.weekNum,
@@ -1216,18 +1716,6 @@ function Progress({ plan, logs, weights, onAddWeight }) {
       pace: l.pace,
       distance: l.distance,
     })), [logs]);
-
-  // Zone distribution
-  const zoneDistribution = useMemo(() => {
-    const counts = HR_ZONES.map((z) => ({
-      zone: z.id,
-      name: z.name,
-      color: z.color,
-      count: logs.filter((l) => l.zone === z.id).length,
-    }));
-    const total = counts.reduce((s, c) => s + c.count, 0);
-    return { data: counts.filter((c) => c.count > 0), total };
-  }, [logs]);
 
   const completionStats = useMemo(() => {
     const phaseStats = {};
@@ -1261,6 +1749,118 @@ function Progress({ plan, logs, weights, onAddWeight }) {
           Week {currentWeekNum} of {TOTAL_WEEKS} · {Math.round((currentWeekNum / TOTAL_WEEKS) * 100)}% through plan
         </div>
       </div>
+
+
+      {/* OVERVIEW */}
+      <div className="grid grid-cols-2 gap-3">
+        <MiniStat label="TOTAL DISTANCE" value={st.totalKm.toFixed(1)} unit="km" sub={`${st.runCount} ${st.runCount === 1 ? 'run' : 'runs'}`} color={C.primary} />
+        <MiniStat label="TIME ON FEET" value={minToHM(st.totalMin)} sub="running time logged" />
+        <MiniStat label="AVG PACE" value={secToPace(st.avgPaceSec)} unit="/km" sub="all runs" />
+        <MiniStat label="LONGEST RUN" value={st.longest ? st.longest.distance.toFixed(1) : '0'} unit="km" sub={st.longest ? formatDateDisplay(st.longest.date) : 'none yet'} />
+      </div>
+
+      {/* SHOES */}
+      <Section
+        title="SHOES · KM"
+        right={
+          <button
+            onClick={() => onEditShoe(null)}
+            className="rounded-xl flex items-center gap-1.5 px-3"
+            style={{ height: 36, backgroundColor: C.primary + '20', border: `1px solid ${C.primary}50`, color: C.primary, fontFamily: 'Oswald, sans-serif', letterSpacing: '0.15em', fontWeight: 600, fontSize: 11 }}
+          >
+            <Plus size={14} /> ADD
+          </button>
+        }
+      >
+        {shoes.filter((s) => !s.retired).map((s) => <ShoeRow key={s.id} shoe={s} onClick={() => onEditShoe(s)} />)}
+        {shoes.some((s) => s.retired) && (
+          <>
+            <div className="text-[10px] tracking-widest mt-3 mb-1" style={{ ...SECTION_TITLE, letterSpacing: '0.2em' }}>RETIRED</div>
+            {shoes.filter((s) => s.retired).map((s) => <ShoeRow key={s.id} shoe={s} onClick={() => onEditShoe(s)} />)}
+          </>
+        )}
+        <div className="text-[11px] mt-2 leading-relaxed" style={{ color: C.textMuted }}>
+          Tap a pair to edit, set as default or retire. Most running shoes last 500 to 800 km.
+        </div>
+      </Section>
+
+      {/* THIS WEEK */}
+      <Section title={`THIS WEEK · W${st.thisWeek.weekNum}`}>
+        <div className="flex items-baseline justify-between mb-2">
+          <span style={{ color: C.text, fontFamily: 'Oswald, sans-serif', fontWeight: 600, fontSize: '1.6rem' }}>
+            {st.thisWeek.doneKm.toFixed(1)}<span className="text-sm" style={{ color: C.textDim }}> / {st.thisWeek.plannedKm.toFixed(1)} km</span>
+          </span>
+          <span className="text-xs" style={{ color: C.textDim, fontFamily: 'JetBrains Mono, monospace' }}>
+            {st.thisWeek.doneRuns}/{st.thisWeek.plannedRuns} runs
+          </span>
+        </div>
+        <Bar100 pct={st.thisWeek.plannedKm > 0 ? (st.thisWeek.doneKm / st.thisWeek.plannedKm) * 100 : 0} />
+      </Section>
+
+      {/* PLAN ADHERENCE */}
+      <Section title="PLAN ADHERENCE">
+        {st.dueCount === 0 ? (
+          <div className="py-5 text-center text-xs" style={{ color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>
+            FIRST RUN: TUE 06 OCT
+          </div>
+        ) : (
+          <>
+            <StatRow label="SESSIONS DONE" sub="planned runs due so far" value={`${st.doneCount}/${st.dueCount} · ${Math.round((st.doneCount / st.dueCount) * 100)}%`} color={C.primary} />
+            <StatRow label="DISTANCE VS PLAN" sub={`${st.plannedKmDue.toFixed(0)} km planned so far`} value={`${st.doneKmOnPlan.toFixed(1)} km · ${st.plannedKmDue > 0 ? Math.round((st.doneKmOnPlan / st.plannedKmDue) * 100) : 0}%`} />
+            <StatRow label="CURRENT STREAK" sub="planned runs done in a row" value={`${st.streak}`} color={st.streak >= 3 ? C.primary : C.text} />
+            <StatRow label="MISSED SESSIONS" value={`${st.missedCount}`} color={st.missedCount > 0 ? C.warn : C.text} />
+            <StatRow
+              label="LAST 4 WEEKS"
+              sub={`previous 4 weeks: ${st.prev4.toFixed(1)} km`}
+              value={`${st.last4.toFixed(1)} km${st.prev4 > 0 ? ` · ${st.last4 >= st.prev4 ? '+' : ''}${Math.round(((st.last4 - st.prev4) / st.prev4) * 100)}%` : ''}`}
+            />
+          </>
+        )}
+      </Section>
+
+      {/* RACE PREDICTOR */}
+      <Section title="MARATHON PREDICTOR">
+        {!st.prediction ? (
+          <div className="py-5 text-center text-xs leading-relaxed" style={{ color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>
+            LOG A RUN OF 5 KM OR MORE<br />TO GET A PREDICTION
+          </div>
+        ) : (
+          <>
+            <div className="flex items-baseline justify-between mb-1">
+              <span style={{ color: st.prediction.min <= GOAL_MIN ? C.primary : C.warn, fontFamily: 'Oswald, sans-serif', fontWeight: 700, fontSize: '2.6rem' }}>
+                {minToClock(st.prediction.min)}
+              </span>
+              <span className="text-xs" style={{ color: st.prediction.min <= GOAL_MIN ? C.primary : C.warn, fontFamily: 'JetBrains Mono, monospace' }}>
+                {st.prediction.min <= GOAL_MIN ? '−' : '+'}{minToClock(Math.abs(st.prediction.min - GOAL_MIN)).replace(/^0:/, '')} vs 4:00
+              </span>
+            </div>
+            <div className="text-[11px] leading-relaxed" style={{ color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>
+              {secToPace((st.prediction.min * 60) / 42.195)}/km · from {st.prediction.from.distance} km in {st.prediction.from.duration} min on {formatDateDisplay(st.prediction.from.date)}
+            </div>
+            <div className="text-[11px] mt-2 leading-relaxed" style={{ color: C.textMuted }}>
+              Uses your fastest run of 5 km+ from the last 6 weeks (Riegel formula). Training runs are not all-out efforts, so the real number is usually faster.
+            </div>
+          </>
+        )}
+      </Section>
+
+      {/* PACE BY SESSION TYPE */}
+      <Section title="PACE BY SESSION TYPE">
+        {st.byType.length === 0 ? (
+          <div className="py-5 text-center text-xs" style={{ color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>NO RUNS LOGGED YET</div>
+        ) : (
+          <>
+            {st.byType.map((t) => (
+              <StatRow key={t.id} label={`${t.label} · ${t.count}`} sub={t.target} value={`${secToPace(t.paceSec)}/km`} />
+            ))}
+            {st.easyCount > 0 && (
+              <div className="mt-2 text-[11px] leading-relaxed" style={{ color: st.easyOnTarget === st.easyCount ? C.primary : C.warn, fontFamily: 'JetBrains Mono, monospace' }}>
+                {st.easyOnTarget}/{st.easyCount} easy runs at 6:20/km or slower.{st.easyOnTarget < st.easyCount ? ' Slow the easy days down.' : ' Good discipline.'}
+              </div>
+            )}
+          </>
+        )}
+      </Section>
 
       {/* COMPLETION BY PHASE */}
       <div className="rounded-xl p-4" style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
@@ -1343,6 +1943,28 @@ function Progress({ plan, logs, weights, onAddWeight }) {
         </div>
       </div>
 
+      {/* MONTHLY */}
+      <Section title="MONTHLY DISTANCE · KM">
+        <div className="space-y-2.5">
+          {st.monthly.map((m) => (
+            <div key={m.month}>
+              <div className="flex justify-between text-xs mb-1" style={{ fontFamily: 'JetBrains Mono, monospace' }}>
+                <span style={{ color: C.textDim, fontFamily: 'Oswald, sans-serif', letterSpacing: '0.15em' }}>{m.label}</span>
+                <span style={{ color: C.textDim }}>{m.km.toFixed(1)} / {m.planned.toFixed(0)} · {m.runs} {m.runs === 1 ? 'run' : 'runs'}</span>
+              </div>
+              <Bar100 pct={m.planned > 0 ? (m.km / m.planned) * 100 : 0} />
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      {/* PERSONAL BESTS */}
+      <Section title="PERSONAL BESTS">
+        <StatRow label="LONGEST RUN" sub={st.longest ? formatDateDisplay(st.longest.date) : null} value={st.longest ? `${st.longest.distance.toFixed(1)} km` : '–'} />
+        <StatRow label="BIGGEST WEEK" sub={st.biggestWeek ? `week ${st.biggestWeek.weekNum}` : null} value={st.biggestWeek ? `${st.biggestWeek.km.toFixed(1)} km` : '–'} />
+        <StatRow label="FASTEST RUN 5 KM+" sub={st.fastest ? `${st.fastest.distance} km · ${formatDateDisplay(st.fastest.date)}` : null} value={st.fastest ? `${secToPace((st.fastest.duration * 60) / st.fastest.distance)}/km` : '–'} />
+      </Section>
+
       {/* PACE */}
       <div className="rounded-xl p-4" style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
         <h3
@@ -1380,39 +2002,31 @@ function Progress({ plan, logs, weights, onAddWeight }) {
       </div>
 
       {/* ZONE DISTRIBUTION */}
-      {zoneDistribution.total > 0 && (
-        <div className="rounded-xl p-4" style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
-          <h3
-            className="text-[11px] tracking-widest mb-3"
-            style={{ color: C.textMuted, fontFamily: 'Oswald, sans-serif', letterSpacing: '0.25em', fontWeight: 600 }}
-          >
-            HR ZONE DISTRIBUTION
-          </h3>
+      {st.zoneTotal > 0 && (
+        <Section title="TIME IN HR ZONES">
           <div className="space-y-2.5">
-            {HR_ZONES.map((z) => {
-              const count = zoneDistribution.data.find((d) => d.zone === z.id)?.count || 0;
-              const pct = zoneDistribution.total > 0 ? (count / zoneDistribution.total) * 100 : 0;
+            {st.zoneMin.map((z) => {
+              const pct = (z.min / st.zoneTotal) * 100;
               return (
                 <div key={z.id}>
                   <div className="flex justify-between mb-1">
                     <div className="flex items-center gap-2">
                       <ZoneBadge zone={z.id} size="sm" />
-                      <span className="text-xs" style={{ color: C.textDim, fontFamily: 'Oswald, sans-serif', letterSpacing: '0.1em' }}>
-                        {z.name}
-                      </span>
+                      <span className="text-xs" style={{ color: C.textDim, fontFamily: 'Oswald, sans-serif', letterSpacing: '0.1em' }}>{z.name}</span>
                     </div>
                     <span style={{ color: C.textDim, fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}>
-                      {count} {count === 1 ? 'run' : 'runs'}
+                      {minToHM(z.min)} · {Math.round(pct)}%
                     </span>
                   </div>
-                  <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: C.bg }}>
-                    <div className="h-full" style={{ width: `${pct}%`, backgroundColor: z.color, borderRadius: 8 }} />
-                  </div>
+                  <Bar100 pct={pct} color={z.color} />
                 </div>
               );
             })}
           </div>
-        </div>
+          <div className="mt-3 text-[11px] leading-relaxed" style={{ color: (st.easyZoneMin / st.zoneTotal) >= 0.7 ? C.primary : C.warn, fontFamily: 'JetBrains Mono, monospace' }}>
+            {Math.round((st.easyZoneMin / st.zoneTotal) * 100)}% of your time in Z1–Z2. Aim for about 80%.
+          </div>
+        </Section>
       )}
 
       {/* WEIGHT */}
@@ -1465,6 +2079,8 @@ function Progress({ plan, logs, weights, onAddWeight }) {
           </div>
         )}
       </div>
+
+      <ResetData onReset={onReset} />
     </div>
   );
 }
@@ -2019,9 +2635,12 @@ export default function App() {
   const [weights, setWeights] = useState([]);
   const [selectedWorkout, setSelectedWorkout] = useState(null);
   const [showWeightModal, setShowWeightModal] = useState(false);
+  const [shoes, setShoes] = useState([]);
+  const [shoeModal, setShoeModal] = useState(null); // { shoe } when open; shoe null = add new
   const [loading, setLoading] = useState(true);
 
   const plan = useMemo(() => generateFullPlan(), []);
+  const shoeList = useMemo(() => shoeStats(shoes, logs), [shoes, logs]);
 
   useEffect(() => {
     const link = document.createElement('link');
@@ -2034,6 +2653,7 @@ export default function App() {
     try {
       setLogs(listAllLogs());
       setWeights(listAllWeights());
+      setShoes(loadShoes());
     } catch (err) {
       console.error('Error loading data:', err);
       setLogs([]);
@@ -2042,8 +2662,9 @@ export default function App() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { 
-    refreshData(); 
+  useEffect(() => {
+    runOneTimeReset();
+    refreshData();
   }, []);
 
   if (loading) {
@@ -2106,9 +2727,9 @@ export default function App() {
 
       {/* CONTENT */}
       <main style={{ paddingBottom: 88 }}>
-        {tab === 'dashboard' && <Dashboard plan={plan} logs={logs} weights={weights} onWorkoutClick={setSelectedWorkout} />}
+        {tab === 'dashboard' && <Dashboard plan={plan} logs={logs} weights={weights} shoes={shoeList} onWorkoutClick={setSelectedWorkout} />}
         {tab === 'plan' && <PlanView plan={plan} logs={logs} onWorkoutClick={setSelectedWorkout} />}
-        {tab === 'progress' && <Progress plan={plan} logs={logs} weights={weights} onAddWeight={() => setShowWeightModal(true)} />}
+        {tab === 'progress' && <Progress plan={plan} logs={logs} weights={weights} shoes={shoeList} onAddWeight={() => setShowWeightModal(true)} onReset={refreshData} onEditShoe={(shoe) => setShoeModal({ shoe })} />}
         {tab === 'guide' && <Guide />}
       </main>
 
@@ -2163,11 +2784,21 @@ export default function App() {
         <LogModal
           workout={selectedWorkout}
           existingLog={existingLog}
+          shoes={shoeList}
           onClose={() => setSelectedWorkout(null)}
           onSave={() => { refreshData(); setSelectedWorkout(null); }}
           onDelete={() => { refreshData(); setSelectedWorkout(null); }}
         />
       )}
+      {shoeModal && (
+        <ShoeModal
+          shoe={shoeModal.shoe}
+          shoes={shoeList}
+          onClose={() => setShoeModal(null)}
+          onSaved={() => { refreshData(); setShoeModal(null); }}
+        />
+      )}
+
       {showWeightModal && (
         <WeightModal
           onClose={() => setShowWeightModal(false)}
